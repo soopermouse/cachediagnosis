@@ -1,0 +1,243 @@
+# cachemed/infrastructure/networking.yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cachemed Networking Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+  PublicSubnet1CIDR:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR block for public subnet 1
+  PublicSubnet2CIDR:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR block for public subnet 2
+  PrivateSubnet1CIDR:
+    Type: String
+    Default: 10.0.3.0/24
+    Description: CIDR block for private subnet 1
+  PrivateSubnet2CIDR:
+    Type: String
+    Default: 10.0.4.0/24
+    Description: CIDR block for private subnet 2
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: !Sub 'cachemed-${Environment}-vpc'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: Cachemed
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub 'cachemed-${Environment}-igw'
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Attach Internet Gateway
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet 1
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'cachemed-${Environment}-public-subnet-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+
+  # Public Subnet 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PublicSubnet2CIDR
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'cachemed-${Environment}-public-subnet-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+
+  # Private Subnet 1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub 'cachemed-${Environment}-private-subnet-1'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+
+  # Private Subnet 2
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub 'cachemed-${Environment}-private-subnet-2'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+
+      # Public Route Table
+      PublicRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref VPC
+          Tags:
+            - Key: Name
+              Value: !Sub 'cachemed-${Environment}-public-rt'
+            - Key: Environment
+              Value: !Ref Environment
+
+      # Public Route
+      PublicRoute:
+        Type: AWS::EC2::Route
+        DependsOn: VPCGatewayAttachment
+        Properties:
+          RouteTableId: !Ref PublicRouteTable
+          DestinationCidrBlock: 0.0.0.0/0
+          GatewayId: !Ref InternetGateway
+
+      # Public Subnet 1 Route Table Association
+      PublicSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          SubnetId: !Ref PublicSubnet1
+          RouteTableId: !Ref PublicRouteTable
+
+      # Public Subnet 2 Route Table Association
+      PublicSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          SubnetId: !Ref PublicSubnet2
+          RouteTableId: !Ref PublicRouteTable
+
+      # Private Route Table
+      PrivateRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+          VpcId: !Ref VPC
+          Tags:
+            - Key: Name
+              Value: !Sub 'cachemed-${Environment}-private-rt'
+            - Key: Environment
+              Value: !Ref Environment
+
+      # Private Subnet 1 Route Table Association
+      PrivateSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          SubnetId: !Ref PrivateSubnet1
+          RouteTableId: !Ref PrivateRouteTable
+
+      # Private Subnet 2 Route Table Association
+      PrivateSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+          SubnetId: !Ref PrivateSubnet2
+          RouteTableId: !Ref PrivateRouteTable
+
+      # VPC Endpoint for DynamoDB
+      DynamoDBEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+          VpcId: !Ref VPC
+          ServiceName: !Sub 'com.amazonaws.${AWS::Region}.dynamodb'
+          RouteTableIds:
+            - !Ref PrivateRouteTable
+            - !Ref PublicRouteTable
+
+      # VPC Endpoint for S3
+      S3Endpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+          VpcId: !Ref VPC
+          ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+          RouteTableIds:
+            - !Ref PrivateRouteTable
+            - !Ref PublicRouteTable
+
+      # Security Group for Lambda Functions
+      LambdaSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+          GroupDescription: Security group for Lambda functions
+          VpcId: !Ref VPC
+          SecurityGroupIngress:
+            - IpProtocol: tcp
+              FromPort: 443
+              ToPort: 443
+              CidrIp: 0.0.0.0/0
+          SecurityGroupEgress:
+            - IpProtocol: -1
+              CidrIp: 0.0.0.0/0
+          Tags:
+            - Key: Name
+              Value: !Sub 'cachemed-${Environment}-lambda-sg'
+            - Key: Environment
+              Value: !Ref Environment
+
+    Outputs:
+      VpcId:
+        Description: VPC ID
+        Value: !Ref VPC
+      PublicSubnetIds:
+        Description: Public Subnet IDs
+        Value: !Join [ ',', [ !Ref PublicSubnet1, !Ref PublicSubnet2 ] ]
+      PrivateSubnetIds:
+        Description: Private Subnet IDs
+        Value: !Join [ ',', [ !Ref PrivateSubnet1, !Ref PrivateSubnet2 ] ]
+      LambdaSecurityGroupId:
+        Description: Security Group ID for Lambda
+        Value: !Ref LambdaSecurityGroup

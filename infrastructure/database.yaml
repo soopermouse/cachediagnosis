@@ -1,0 +1,224 @@
+# cachemed/infrastructure/database.yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cachemed Database Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  DeletionProtection:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Resources:
+  # KMS Key for encryption
+  DatabaseKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS key for Cachemed ${Environment} database'
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+
+  # Patients Table
+  PatientsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'cachemed-${Environment}-patients'
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: !Ref DeletionProtection
+      SSESpecification:
+        KMSMasterKeyId: !Ref DatabaseKMSKey
+        SSEEnabled: true
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: patientId
+          AttributeType: S
+        - AttributeName: email
+          AttributeType: S
+        - AttributeName: providerId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: N
+      KeySchema:
+        - AttributeName: patientId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: email-index
+          KeySchema:
+            - AttributeName: email
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: provider-index
+          KeySchema:
+            - AttributeName: providerId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Application
+          Value: Cachemed
+
+  # Biometrics Table
+  BiometricsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'cachemed-${Environment}-biometrics'
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: !Ref DeletionProtection
+      SSESpecification:
+        KMSMasterKeyId: !Ref DatabaseKMSKey
+        SSEEnabled: true
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: patientId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: readingType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: patientId
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      LocalSecondaryIndexes:
+        - IndexName: type-index
+          KeySchema:
+            - AttributeName: patientId
+              KeyType: HASH
+            - AttributeName: readingType
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # Files Table
+  FilesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'cachemed-${Environment}-files'
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: !Ref DeletionProtection
+      SSESpecification:
+        KMSMasterKeyId: !Ref DatabaseKMSKey
+        SSEEnabled: true
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: fileId
+          AttributeType: S
+        - AttributeName: patientId
+          AttributeType: S
+        - AttributeName: uploadDate
+          AttributeType: N
+        - AttributeName: fileType
+          AttributeType: S
+      KeySchema:
+        - AttributeName: fileId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: patient-files-index
+          KeySchema:
+            - AttributeName: patientId
+              KeyType: HASH
+            - AttributeName: uploadDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: file-type-index
+          KeySchema:
+            - AttributeName: fileType
+              KeyType: HASH
+            - AttributeName: uploadDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: KEYS_ONLY
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # Predictions Table
+  PredictionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub 'cachemed-${Environment}-predictions'
+      BillingMode: PAY_PER_REQUEST
+      DeletionProtectionEnabled: !Ref DeletionProtection
+      SSESpecification:
+        KMSMasterKeyId: !Ref DatabaseKMSKey
+        SSEEnabled: true
+        SSEType: KMS
+      AttributeDefinitions:
+        - AttributeName: predictionId
+          AttributeType: S
+        - AttributeName: patientId
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: N
+        - AttributeName: riskLevel
+          AttributeType: S
+      KeySchema:
+        - AttributeName: predictionId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: patient-predictions-index
+          KeySchema:
+            - AttributeName: patientId
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: risk-level-index
+          KeySchema:
+            - AttributeName: riskLevel
+              KeyType: HASH
+            - AttributeName: timestamp
+              KeyType: RANGE
+          Projection:
+            ProjectionType: KEYS_ONLY
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+Outputs:
+  PatientsTableArn:
+    Description: Patients Table ARN
+    Value: !GetAtt PatientsTable.Arn
+  BiometricsTableArn:
+    Description: Biometrics Table ARN
+    Value: !GetAtt BiometricsTable.Arn
+  FilesTableArn:
+    Description: Files Table ARN
+    Value: !GetAtt FilesTable.Arn
+  PredictionsTableArn:
+    Description: Predictions Table ARN
+    Value: !GetAtt PredictionsTable.Arn
+  KMSKeyId:
+    Description: KMS Key ID
+    Value: !Ref DatabaseKMSKey

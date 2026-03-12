@@ -1,0 +1,7 @@
+# cachemed/api/__init__.py
+from flask import Blueprint
+
+api_bp = Blueprint('api', __name__, url_prefix='/api')
+
+# Import routes to register them
+from .routes import health, patients, biometrics, predictions, files

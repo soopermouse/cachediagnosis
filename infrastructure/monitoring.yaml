@@ -1,0 +1,221 @@
+# cachemed/infrastructure/monitoring.yaml
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Cachemed Monitoring Infrastructure'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+  AlarmEmail:
+    Type: String
+    Description: Email address for alarms
+
+Resources:
+  # CloudWatch Dashboard
+  CachemedDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub 'cachemed-${Environment}-dashboard'
+      DashboardBody: !Sub
+        - |
+          {
+            "widgets": [
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/DynamoDB", "SuccessfulRequestLatency", "TableName", "${PatientsTable}", { "stat": "Average" } ],
+                    [ ".", "SuccessfulRequestLatency", ".", ".", { "stat": "p95" } ]
+                  ],
+                  "period": 300,
+                  "stat": "Average",
+                  "region": "${AWS::Region}",
+                  "title": "DynamoDB Latency - Patients Table"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 12,
+                "y": 0,
+                "width": 12,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${BiometricsTable}", { "stat": "Sum" } ],
+                    [ ".", "ConsumedWriteCapacityUnits", ".", ".", { "stat": "Sum" } ]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${AWS::Region}",
+                  "title": "DynamoDB Capacity - Biometrics"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 0,
+                "y": 6,
+                "width": 8,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/Lambda", "Invocations", "FunctionName", "${ApiLambda}", { "stat": "Sum" } ],
+                    [ ".", "Errors", ".", ".", { "stat": "Sum" } ],
+                    [ ".", "Throttles", ".", ".", { "stat": "Sum" } ]
+                  ],
+                  "period": 300,
+                  "stat": "Sum",
+                  "region": "${AWS::Region}",
+                  "title": "Lambda Invocations"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 8,
+                "y": 6,
+                "width": 8,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/Lambda", "Duration", "FunctionName", "${ApiLambda}", { "stat": "Average" } ],
+                    [ ".", "Duration", ".", ".", { "stat": "p95" } ]
+                  ],
+                  "period": 300,
+                  "stat": "Average",
+                  "region": "${AWS::Region}",
+                  "title": "Lambda Duration"
+                }
+              },
+              {
+                "type": "metric",
+                "x": 16,
+                "y": 6,
+                "width": 8,
+                "height": 6,
+                "properties": {
+                  "metrics": [
+                    [ "AWS/S3", "NumberOfObjects", "BucketName", "${FilesBucket}", { "stat": "Average" } ],
+                    [ ".", "BucketSizeBytes", ".", ".", { "stat": "Average" } ]
+                  ],
+                  "period": 86400,
+                  "stat": "Average",
+                  "region": "${AWS::Region}",
+                  "title": "S3 Bucket Metrics"
+                }
+              }
+            ]
+          }
+        - {
+            PatientsTable: !Sub 'cachemed-${Environment}-patients',
+            BiometricsTable: !Sub 'cachemed-${Environment}-biometrics',
+            ApiLambda: !Sub 'cachemed-${Environment}-api',
+            FilesBucket: !Sub 'cachemed-${Environment}-files'
+          }
+
+  # SNS Topic for Alarms
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'cachemed-${Environment}-alarms'
+      Subscription:
+        - Endpoint: !Ref AlarmEmail
+          Protocol: email
+
+  # DynamoDB Alarms
+  DynamoDBThrottlingAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'cachemed-${Environment}-dynamodb-throttling'
+      AlarmDescription: 'Alarm for DynamoDB throttling events'
+      MetricName: ThrottledRequests
+      Namespace: AWS/DynamoDB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      Dimensions:
+        - Name: TableName
+          Value: !Sub 'cachemed-${Environment}-biometrics'
+
+  # Lambda Error Alarm
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'cachemed-${Environment}-lambda-errors'
+      AlarmDescription: 'Alarm for Lambda function errors'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub 'cachemed-${Environment}-api'
+
+  # API Gateway 5XX Error Alarm
+  Api5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'cachemed-${Environment}-api-5xx'
+      AlarmDescription: 'Alarm for API Gateway 5XX errors'
+      MetricName: 5XXError
+      Namespace: AWS/ApiGateway
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub 'cachemed-${Environment}-api'
+
+  # S3 4XX Error Alarm
+  S3ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub 'cachemed-${Environment}-s3-4xx'
+      AlarmDescription: 'Alarm for S3 4XX errors'
+      MetricName: 4xxErrors
+      Namespace: AWS/S3
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions:
+        - !Ref AlarmTopic
+      OKActions:
+        - !Ref AlarmTopic
+      Dimensions:
+        - Name: BucketName
+          Value: !Sub 'cachemed-${Environment}-files'
+
+Outputs:
+  DashboardName:
+    Description: CloudWatch Dashboard Name
+    Value: !Ref CachemedDashboard
+  AlarmTopicArn:
+    Description: SNS Topic ARN for alarms
+    Value: !Ref AlarmTopic
